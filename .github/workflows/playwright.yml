@@ -1,28 +1,114 @@
 name: Playwright Tests
+
 on:
   workflow_dispatch:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+    inputs:
+      tag:
+        description: "Select Test Tag"
+        required: true
+        type: choice
+        options:
+          - all
+          - smoke
+          - regression
+
+      browser:
+        description: "Select Browser"
+        required: true
+        type: choice
+        options:
+          - all
+          - chromium
+          - firefox
+          - webkit
+
+      email:
+        description: "Enter recipient email (optional)"
+        required: false
+        type: string
+
+      file:
+        description: "Run specific file (optional)"
+        required: false
+        type: string
+
+      folder:
+        description: "Run specific folder (optional)"
+        required: false
+        type: string
+
 jobs:
   test:
     timeout-minutes: 60
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: lts/*
-    - name: Install dependencies
-      run: npm ci
-    - name: Install Playwright Browsers
-      run: npx playwright install --with-deps
-    - name: Run Playwright tests
-      run: npx playwright test --project=chromium
-    - uses: actions/upload-artifact@v4
-      if: ${{ !cancelled() }}
-      with:
-        name: playwright-report
-        path: playwright-report/
-        retention-days: 30
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright Tests
+        run: |
+          echo "Starting Playwright execution..."
+
+          CMD="npx playwright test"
+
+          # Tag filter (skip if all)
+          if [ "${{ github.event.inputs.tag }}" != "all" ]; then
+            CMD="$CMD --grep @${{ github.event.inputs.tag }}"
+          fi
+
+          # File (optional)
+          if [ ! -z "${{ github.event.inputs.file }}" ]; then
+            CMD="$CMD ${{ github.event.inputs.file }}"
+          fi
+
+          # Folder (optional)
+          if [ ! -z "${{ github.event.inputs.folder }}" ]; then
+            CMD="$CMD ${{ github.event.inputs.folder }}"
+          fi
+
+          # Browser (skip if all → runs all browsers)
+          if [ "${{ github.event.inputs.browser }}" != "all" ]; then
+            CMD="$CMD --project=${{ github.event.inputs.browser }}"
+          fi
+
+          echo "Executing command: $CMD"
+          eval $CMD
+
+      - name: Upload HTML Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+
+      - name: Send Email Report
+        if: ${{ always() && github.event.inputs.email != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: Playwright Test Results
+          body: |
+            Playwright execution completed.
+
+            Tag: ${{ github.event.inputs.tag }}
+            Browser: ${{ github.event.inputs.browser }}
+
+            Please check the attached report.
+          to: ${{ github.event.inputs.email }}
+          from: GitHub Actions
+          attachments: playwright-report/index.html
